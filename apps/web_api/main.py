@@ -1,0 +1,632 @@
+"""FastAPI web application."""
+import sys
+from pathlib import Path
+import os
+import shutil
+from datetime import datetime
+from uuid import uuid4
+from typing import List, Optional
+import json
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Query
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sse_starlette.sse import EventSourceResponse
+
+from packages.core.config import get_settings
+from packages.core.database import (
+    get_db,
+    Document,
+    DocumentStatus,
+    ChunkProfile,
+    get_session_maker,
+)
+from packages.core.loaders import compute_file_sha256
+from packages.core.kafka_utils import send_ingest_event, send_reindex_event
+from packages.core.retrieval import retrieve_chunks, format_citations, build_rag_context
+from packages.core.vllm_client import get_vllm_client, build_rag_prompt
+from packages.core.logging_config import setup_logging
+
+logger = setup_logging("web_api")
+
+app = FastAPI(
+    title="AI Knowledge Bench",
+    description="RAG knowledge assistant with evaluation harness",
+    version="0.1.0"
+)
+
+settings = get_settings()
+
+# Ensure upload directory exists
+os.makedirs(settings.app_upload_dir, exist_ok=True)
+
+
+# Pydantic models
+class DocumentResponse(BaseModel):
+    id: str
+    filename: str
+    mime_type: Optional[str]
+    file_size: int
+    status: str
+    created_at: str
+
+
+class ChunkProfileCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    chunk_size: int
+    chunk_overlap: int
+
+
+class ChunkProfileResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    chunk_size: int
+    chunk_overlap: int
+    is_active: bool
+    created_at: str
+
+
+class ReindexRequest(BaseModel):
+    chunk_profile_id: str
+    embedding_model: Optional[str] = None
+    document_ids: Optional[List[str]] = None
+
+
+class ChatRequest(BaseModel):
+    query: str
+    top_k: Optional[int] = None
+    chunk_profile_id: Optional[str] = None
+
+
+# Endpoints
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve simple HTML UI."""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>AI Knowledge Bench</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                margin-bottom: 20px;
+            }
+            h1 {
+                color: #333;
+                border-bottom: 3px solid #4CAF50;
+                padding-bottom: 10px;
+            }
+            h2 {
+                color: #555;
+                margin-top: 30px;
+            }
+            .upload-section, .chat-section {
+                margin: 20px 0;
+            }
+            input[type="file"], input[type="text"] {
+                padding: 10px;
+                margin: 10px 0;
+                width: 100%;
+                box-sizing: border-box;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            button {
+                background-color: #4CAF50;
+                color: white;
+                padding: 12px 24px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+                margin: 5px;
+            }
+            button:hover {
+                background-color: #45a049;
+            }
+            button:disabled {
+                background-color: #ccc;
+                cursor: not-allowed;
+            }
+            .message {
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 4px;
+            }
+            .user-message {
+                background-color: #e3f2fd;
+                text-align: right;
+            }
+            .assistant-message {
+                background-color: #f1f8e9;
+            }
+            .citations {
+                background-color: #fff3cd;
+                padding: 15px;
+                margin: 10px 0;
+                border-radius: 4px;
+                border-left: 4px solid #ffc107;
+            }
+            .citation {
+                margin: 8px 0;
+                padding: 8px;
+                background: white;
+                border-radius: 3px;
+            }
+            #status {
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 4px;
+                display: none;
+            }
+            .status-success {
+                background-color: #d4edda;
+                color: #155724;
+            }
+            .status-error {
+                background-color: #f8d7da;
+                color: #721c24;
+            }
+            .loading {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #4CAF50;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        </style>
+    </head>
+    <body>
+        <h1>🤖 AI Knowledge Bench</h1>
+        
+        <div class="container">
+            <h2>📄 Upload Document</h2>
+            <div class="upload-section">
+                <input type="file" id="fileInput" accept=".pdf,.docx,.pptx,.xlsx,.html,.md,.txt">
+                <button onclick="uploadFile()">Upload</button>
+                <div id="status"></div>
+            </div>
+        </div>
+        
+        <div class="container">
+            <h2>💬 Chat</h2>
+            <div class="chat-section">
+                <input type="text" id="queryInput" placeholder="Ask a question..." onkeypress="if(event.key==='Enter') sendQuery()">
+                <button onclick="sendQuery()">Send</button>
+                <div id="chatMessages"></div>
+                <div id="citations"></div>
+            </div>
+        </div>
+        
+        <script>
+            async function uploadFile() {
+                const fileInput = document.getElementById('fileInput');
+                const status = document.getElementById('status');
+                const file = fileInput.files[0];
+                
+                if (!file) {
+                    showStatus('Please select a file', 'error');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                showStatus('Uploading...', 'success');
+                
+                try {
+                    const response = await fetch('/v1/documents', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        showStatus(`File uploaded successfully! Document ID: ${data.id}`, 'success');
+                        fileInput.value = '';
+                    } else {
+                        const error = await response.text();
+                        showStatus(`Upload failed: ${error}`, 'error');
+                    }
+                } catch (error) {
+                    showStatus(`Upload error: ${error.message}`, 'error');
+                }
+            }
+            
+            async function sendQuery() {
+                const queryInput = document.getElementById('queryInput');
+                const chatMessages = document.getElementById('chatMessages');
+                const citationsDiv = document.getElementById('citations');
+                const query = queryInput.value.trim();
+                
+                if (!query) return;
+                
+                // Add user message
+                addMessage(query, 'user');
+                queryInput.value = '';
+                
+                // Add loading indicator
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'message assistant-message';
+                loadingDiv.id = 'loading';
+                loadingDiv.innerHTML = '<div class="loading"></div> Thinking...';
+                chatMessages.appendChild(loadingDiv);
+                
+                try {
+                    const response = await fetch(`/v1/chat/stream?query=${encodeURIComponent(query)}`);
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    
+                    // Remove loading indicator
+                    loadingDiv.remove();
+                    
+                    // Create message div for streaming response
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message assistant-message';
+                    chatMessages.appendChild(messageDiv);
+                    
+                    let fullResponse = '';
+                    let citations = [];
+                    
+                    while (true) {
+                        const {value, done} = await reader.read();
+                        if (done) break;
+                        
+                        const text = decoder.decode(value);
+                        const lines = text.split('\\n');
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.substring(6);
+                                if (data === '[DONE]') continue;
+                                
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    if (parsed.type === 'token') {
+                                        fullResponse += parsed.content;
+                                        messageDiv.textContent = fullResponse;
+                                    } else if (parsed.type === 'citations') {
+                                        citations = parsed.citations;
+                                    }
+                                } catch (e) {
+                                    console.error('Parse error:', e);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Display citations
+                    if (citations.length > 0) {
+                        citationsDiv.innerHTML = '<h3>📚 Sources</h3>';
+                        const citList = document.createElement('div');
+                        citations.forEach((cit, idx) => {
+                            const citDiv = document.createElement('div');
+                            citDiv.className = 'citation';
+                            citDiv.innerHTML = `
+                                <strong>[${idx + 1}]</strong> ${cit.source_ref}<br>
+                                <small>Document: ${cit.document_id.substring(0, 8)}... | Score: ${cit.score.toFixed(3)}</small><br>
+                                <em>${cit.snippet}</em>
+                            `;
+                            citList.appendChild(citDiv);
+                        });
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'citations';
+                        wrapper.appendChild(citList);
+                        citationsDiv.appendChild(wrapper);
+                    }
+                    
+                } catch (error) {
+                    loadingDiv.remove();
+                    addMessage(`Error: ${error.message}`, 'assistant');
+                }
+            }
+            
+            function addMessage(content, role) {
+                const chatMessages = document.getElementById('chatMessages');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${role}-message`;
+                messageDiv.textContent = content;
+                chatMessages.appendChild(messageDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            
+            function showStatus(message, type) {
+                const status = document.getElementById('status');
+                status.textContent = message;
+                status.className = `status-${type}`;
+                status.style.display = 'block';
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "ok"}
+
+
+@app.post("/v1/documents", response_model=DocumentResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a document."""
+    try:
+        # Save file
+        file_path = os.path.join(settings.app_upload_dir, f"{uuid4()}_{file.filename}")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Compute hash
+        sha256 = compute_file_sha256(file_path)
+        
+        # Check if document already exists
+        existing = db.query(Document).filter(Document.sha256 == sha256).first()
+        if existing:
+            # Remove duplicate file
+            os.remove(file_path)
+            logger.info(f"Document already exists: {existing.id}")
+            return DocumentResponse(
+                id=str(existing.id),
+                filename=existing.filename,
+                mime_type=existing.mime_type,
+                file_size=existing.file_size,
+                status=existing.status.value,
+                created_at=existing.created_at.isoformat()
+            )
+        
+        # Create document record
+        doc = Document(
+            id=uuid4(),
+            filename=file.filename,
+            filepath=file_path,
+            mime_type=file.content_type,
+            file_size=os.path.getsize(file_path),
+            sha256=sha256,
+            status=DocumentStatus.UPLOADED,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+        
+        # Send Kafka event for ingestion
+        send_ingest_event(str(doc.id))
+        
+        logger.info(f"Document uploaded: {doc.filename} (ID: {doc.id})")
+        
+        return DocumentResponse(
+            id=str(doc.id),
+            filename=doc.filename,
+            mime_type=doc.mime_type,
+            file_size=doc.file_size,
+            status=doc.status.value,
+            created_at=doc.created_at.isoformat()
+        )
+    
+    except Exception as e:
+        logger.error(f"Error uploading document: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/documents", response_model=List[DocumentResponse])
+async def list_documents(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """List documents."""
+    docs = db.query(Document).offset(skip).limit(limit).all()
+    
+    return [
+        DocumentResponse(
+            id=str(doc.id),
+            filename=doc.filename,
+            mime_type=doc.mime_type,
+            file_size=doc.file_size,
+            status=doc.status.value,
+            created_at=doc.created_at.isoformat()
+        )
+        for doc in docs
+    ]
+
+
+@app.get("/v1/chunk-profiles", response_model=List[ChunkProfileResponse])
+async def list_chunk_profiles(db: Session = Depends(get_db)):
+    """List chunk profiles."""
+    profiles = db.query(ChunkProfile).all()
+    
+    return [
+        ChunkProfileResponse(
+            id=str(p.id),
+            name=p.name,
+            description=p.description,
+            chunk_size=p.chunk_size,
+            chunk_overlap=p.chunk_overlap,
+            is_active=p.is_active,
+            created_at=p.created_at.isoformat()
+        )
+        for p in profiles
+    ]
+
+
+@app.post("/v1/chunk-profiles", response_model=ChunkProfileResponse)
+async def create_chunk_profile(
+    profile: ChunkProfileCreate,
+    db: Session = Depends(get_db)
+):
+    """Create a new chunk profile."""
+    # Check if name already exists
+    existing = db.query(ChunkProfile).filter(ChunkProfile.name == profile.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Profile name already exists")
+    
+    new_profile = ChunkProfile(
+        id=uuid4(),
+        name=profile.name,
+        description=profile.description,
+        chunk_size=profile.chunk_size,
+        chunk_overlap=profile.chunk_overlap,
+        is_active=False,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(new_profile)
+    db.commit()
+    db.refresh(new_profile)
+    
+    return ChunkProfileResponse(
+        id=str(new_profile.id),
+        name=new_profile.name,
+        description=new_profile.description,
+        chunk_size=new_profile.chunk_size,
+        chunk_overlap=new_profile.chunk_overlap,
+        is_active=new_profile.is_active,
+        created_at=new_profile.created_at.isoformat()
+    )
+
+
+@app.post("/v1/chunk-profiles/{profile_id}/activate")
+async def activate_chunk_profile(
+    profile_id: str,
+    db: Session = Depends(get_db)
+):
+    """Activate a chunk profile."""
+    profile = db.query(ChunkProfile).filter(ChunkProfile.id == profile_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    # Deactivate all profiles
+    db.query(ChunkProfile).update({ChunkProfile.is_active: False})
+    
+    # Activate this profile
+    profile.is_active = True
+    profile.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {"status": "activated", "profile_id": str(profile.id)}
+
+
+@app.post("/v1/reindex")
+async def reindex_documents(
+    request: ReindexRequest,
+    db: Session = Depends(get_db)
+):
+    """Trigger reindexing of documents."""
+    # Get documents to reindex
+    if request.document_ids:
+        docs = db.query(Document).filter(Document.id.in_(request.document_ids)).all()
+    else:
+        # Reindex all ready documents
+        docs = db.query(Document).filter(Document.status == DocumentStatus.READY).all()
+    
+    # Send reindex events
+    for doc in docs:
+        send_reindex_event(
+            str(doc.id),
+            request.chunk_profile_id,
+            request.embedding_model
+        )
+    
+    return {
+        "status": "reindex_triggered",
+        "document_count": len(docs),
+        "chunk_profile_id": request.chunk_profile_id
+    }
+
+
+@app.get("/v1/chat/stream")
+async def chat_stream(
+    query: str = Query(...),
+    top_k: Optional[int] = Query(None),
+    chunk_profile_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Streaming chat endpoint using SSE."""
+    
+    async def generate():
+        try:
+            # Get active chunk profile if not specified
+            if not chunk_profile_id:
+                active_profile = db.query(ChunkProfile).filter(ChunkProfile.is_active == True).first()
+                if not active_profile:
+                    yield f"data: {json.dumps({'type': 'error', 'content': 'No active chunk profile'})}\n\n"
+                    return
+                profile_id = str(active_profile.id)
+            else:
+                profile_id = chunk_profile_id
+            
+            # Retrieve relevant chunks
+            results = retrieve_chunks(
+                db=db,
+                query=query,
+                chunk_profile_id=profile_id,
+                top_k=top_k
+            )
+            
+            if not results:
+                yield f"data: {json.dumps({'type': 'token', 'content': 'No relevant information found.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'citations', 'citations': []})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            
+            # Build context
+            context = build_rag_context(results)
+            
+            # Build prompt
+            messages = build_rag_prompt(query, context)
+            
+            # Stream response from vLLM
+            vllm_client = get_vllm_client()
+            
+            for token in vllm_client.chat_stream(messages, max_tokens=512, temperature=0.7):
+                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+            
+            # Send citations
+            citations = format_citations(results)
+            yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+            
+            yield "data: [DONE]\n\n"
+        
+        except Exception as e:
+            logger.error(f"Error in chat stream: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+    
+    return EventSourceResponse(generate())
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=settings.app_host, port=settings.app_port)

@@ -1,0 +1,63 @@
+[project]
+name = "ai-knowledge-bench"
+version = "0.1.0"
+description = "An end-to-end RAG knowledge assistant with evaluation harness"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "sqlalchemy>=2.0.25",
+    "alembic>=1.13.1",
+    "psycopg2-binary>=2.9.9",
+    "pgvector>=0.2.5",
+    "kafka-python>=2.0.2",
+    "redis>=5.0.1",
+    "python-multipart>=0.0.6",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "sentence-transformers>=2.3.1",
+    "torch>=2.1.2",
+    "numpy>=1.26.3",
+    "pandas>=2.1.4",
+    "pymupdf>=1.23.8",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.2",
+    "beautifulsoup4>=4.12.3",
+    "markdown>=3.5.2",
+    "requests>=2.31.0",
+    "openai>=1.10.0",
+    "sse-starlette>=1.8.2",
+    "aiofiles>=23.2.1",
+    "httpx>=0.26.0",
+    "scikit-learn>=1.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.4",
+    "pytest-asyncio>=0.23.3",
+    "black>=23.12.1",
+    "ruff>=0.1.11",
+    "mypy>=1.8.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_backend"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
