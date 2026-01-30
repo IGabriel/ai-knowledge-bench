@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ai-kb-postgres
+    environment:
+      POSTGRES_USER: bench_user
+      POSTGRES_PASSWORD: bench_pass
+      POSTGRES_DB: ai_knowledge_bench
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka with KRaft (no Zookeeper needed)
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: ai-kb-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: ai-kb-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Web API
+  web_api:
+    build:
+      context: .
+      dockerfile: apps/web_api/Dockerfile
+    container_name: ai-kb-web-api
+    environment:
+      DATABASE_URL: postgresql://bench_user:bench_pass@postgres:5432/ai_knowledge_bench
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_URL: redis://redis:6379/0
+      VLLM_BASE_URL: http://vllm:8000/v1
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8080
+      APP_UPLOAD_DIR: /app/data/uploads
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/uploads:/app/data/uploads
+      - ./reports:/app/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Ingestion Worker
+  worker_ingest:
+    build:
+      context: .
+      dockerfile: apps/worker_ingest/Dockerfile
+    container_name: ai-kb-worker-ingest
+    environment:
+      DATABASE_URL: postgresql://bench_user:bench_pass@postgres:5432/ai_knowledge_bench
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_URL: redis://redis:6379/0
+      EMBEDDING_DEVICE: cpu
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # vLLM (CPU mode - optional, can be heavy)
+  # Uncomment if you want to run vLLM in Docker
+  # For development, consider running vLLM separately on a machine with more resources
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: ai-kb-vllm
+  #   command: >
+  #     --model Qwen/Qwen2.5-0.5B-Instruct
+  #     --dtype auto
+  #     --device cpu
+  #     --max-model-len 2048
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - vllm_cache:/root/.cache/huggingface
+  #   environment:
+  #     HF_HOME: /root/.cache/huggingface
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 8G
+
+volumes:
+  postgres_data:
+  kafka_data:
+  redis_data:
+  # vllm_cache:
+
+networks:
+  default:
+    name: ai-kb-network
