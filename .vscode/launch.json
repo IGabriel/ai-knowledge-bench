@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "AIKB: Web API (local debug)",
+      "type": "python",
+      "request": "launch",
+      "module": "apps.web_api.main",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.vscode/.env.debug",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "preLaunchTask": "AIKB: Ensure deps up (local debug)"
+    },
+    {
+      "name": "AIKB: Worker Ingest (local debug)",
+      "type": "python",
+      "request": "launch",
+      "module": "apps.worker_ingest.main",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.vscode/.env.debug",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "preLaunchTask": "AIKB: Ensure deps up (local debug)"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "AIKB: Debug Upload Pipeline (web + worker)",
+      "configurations": [
+        "AIKB: Web API (local debug)",
+        "AIKB: Worker Ingest (local debug)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "AIKB: Ensure deps up (local debug)",
+      "dependsOn": [
+        "AIKB: Prepare local dirs",
+        "AIKB: Docker up deps (postgres/kafka/redis)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "AIKB: Prepare local dirs",
+      "type": "shell",
+      "command": "mkdir -p data/uploads reports",
+      "problemMatcher": []
+    },
+    {
+      "label": "AIKB: Docker up deps (postgres/kafka/redis)",
+      "type": "shell",
+      "command": "cd deploy && docker compose --env-file ../.env up -d --no-recreate postgres kafka redis",
+      "problemMatcher": []
+    },
+    {
+      "label": "AIKB: Docker ps",
+      "type": "shell",
+      "command": "cd deploy && docker compose --env-file ../.env ps",
+      "problemMatcher": []
+    }
+  ]
+}

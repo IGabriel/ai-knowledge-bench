@@ -58,7 +58,15 @@ class Document(Base):
     mime_type = Column(String(128), nullable=True)
     file_size = Column(Integer, nullable=False)
     sha256 = Column(String(64), nullable=False, unique=True, index=True)
-    status = Column(Enum(DocumentStatus), nullable=False, default=DocumentStatus.UPLOADED)
+    status = Column(
+        Enum(
+            DocumentStatus,
+            name="documentstatus",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=DocumentStatus.UPLOADED,
+    )
     error_message = Column(Text, nullable=True)
     metadata_json = Column("metadata", Text, nullable=True)  # JSON string
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
