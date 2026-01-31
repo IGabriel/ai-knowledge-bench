@@ -47,23 +47,23 @@ app = FastAPI(
     openapi_tags=[
         {
             "name": TAGS_SYSTEM,
-            "description": "系统与基础能力（健康检查、简单 UI）。",
+            "description": "System and basic capabilities (health checks, minimal UI).",
         },
         {
             "name": TAGS_DOCUMENTS,
-            "description": "文档上传与文档列表（触发异步入库/索引）。",
+            "description": "Upload and list documents (triggers async ingest/index).",
         },
         {
             "name": TAGS_CHUNK_PROFILES,
-            "description": "分块策略配置（chunk size / overlap / 激活的 profile）。",
+            "description": "Chunking strategy config (chunk size / overlap / active profile).",
         },
         {
             "name": TAGS_REINDEX,
-            "description": "重建索引（通过 Kafka 触发异步重处理）。",
+            "description": "Rebuild index (triggers async reprocessing via Kafka).",
         },
         {
             "name": TAGS_CHAT,
-            "description": "检索 + RAG + LLM 的 SSE 流式对话接口。",
+            "description": "Retrieval + RAG + LLM streaming chat endpoint (SSE).",
         },
     ],
 )
@@ -76,28 +76,28 @@ os.makedirs(settings.app_upload_dir, exist_ok=True)
 
 # Pydantic models
 class DocumentResponse(BaseModel):
-    """文档接口的返回模型（轻量视图）。
+    """Response model for document APIs (lightweight view).
 
-    主要用于上传后回显，以及列表展示。
-    如需观察“入库/索引进度”，请轮询 `GET /v1/documents` 并查看 `status`。
+    Primarily used for echoing back after upload and for list views.
+    To observe ingest/index progress, poll `GET /v1/documents` and check `status`.
     """
 
-    id: str = Field(..., description="文档 UUID。", examples=["14b1f61b-1842-455d-b31c-7f0882bb1729"])
-    filename: str = Field(..., description="用户上传时的原始文件名。", examples=["README.md"])
+    id: str = Field(..., description="Document UUID.", examples=["14b1f61b-1842-455d-b31c-7f0882bb1729"])
+    filename: str = Field(..., description="Original filename provided by the client.", examples=["README.md"])
     mime_type: Optional[str] = Field(
         None,
-        description="客户端报告的 MIME type；不同客户端/浏览器可能为空。",
+        description="Client-reported MIME type; may be empty depending on browser/client.",
         examples=["text/markdown"],
     )
-    file_size: int = Field(..., description="文件大小（字节）。", examples=[14225])
+    file_size: int = Field(..., description="File size in bytes.", examples=[14225])
     status: str = Field(
         ...,
-        description="入库/索引状态。常见值：uploaded / ingesting / ready / failed。",
+        description="Ingest/index status. Common values: uploaded / ingesting / ready / failed.",
         examples=["ingesting"],
     )
     created_at: str = Field(
         ...,
-        description="文档记录创建时间（UTC，ISO 8601）。",
+        description="Created timestamp (UTC, ISO 8601).",
         examples=["2026-01-31T08:27:42.151214"],
     )
     id: str
@@ -109,64 +109,71 @@ class DocumentResponse(BaseModel):
 
 
 class ChunkProfileCreate(BaseModel):
-    """创建分块策略（chunk profile）的请求模型。
+    """Request model for creating a chunk profile.
 
-    chunk profile 用于控制：文档如何切分成 chunk，再对 chunk 做 embedding 并写入向量表。
+    A chunk profile controls how documents are split into chunks, then embedded and
+    written into the vector table.
     """
 
-    name: str = Field(..., description="profile 名称（需唯一）。", examples=["default"])
-    description: Optional[str] = Field(None, description="描述信息（可选）。", examples=["默认分块策略"])
-    chunk_size: int = Field(..., description="chunk 大小（实现相关：可能是 token/字符的近似值）。", examples=[512])
+    name: str = Field(..., description="Profile name (must be unique).", examples=["default"])
+    description: Optional[str] = Field(None, description="Optional description.", examples=["Default chunking strategy"])
+    chunk_size: int = Field(
+        ...,
+        description="Chunk size (implementation-dependent; approximate tokens/chars).",
+        examples=[512],
+    )
     chunk_overlap: int = Field(
         ...,
-        description="相邻 chunk 的重叠大小。",
+        description="Overlap size between adjacent chunks.",
         examples=[128],
     )
 
 
 class ChunkProfileResponse(BaseModel):
-    """chunk profile 的返回模型。"""
+    """Response model for a chunk profile."""
 
-    id: str = Field(..., description="chunk profile UUID。")
-    name: str = Field(..., description="profile 名称。")
-    description: Optional[str] = Field(None, description="profile 描述。")
-    chunk_size: int = Field(..., description="chunk 大小。")
-    chunk_overlap: int = Field(..., description="chunk 重叠大小。")
-    is_active: bool = Field(..., description="是否为当前激活的 profile。")
-    created_at: str = Field(..., description="创建时间（UTC，ISO 8601）。")
+    id: str = Field(..., description="Chunk profile UUID.")
+    name: str = Field(..., description="Profile name.")
+    description: Optional[str] = Field(None, description="Profile description.")
+    chunk_size: int = Field(..., description="Chunk size.")
+    chunk_overlap: int = Field(..., description="Chunk overlap size.")
+    is_active: bool = Field(..., description="Whether this is the currently active profile.")
+    created_at: str = Field(..., description="Created timestamp (UTC, ISO 8601).")
 
 
 class ReindexRequest(BaseModel):
-    """触发重建索引的请求模型。
+    """Request model for triggering reindex.
 
-    重建索引含义：按指定 chunk profile 重新分块，并重新生成 embeddings 写入向量表。
-    注意：此接口只负责“发消息触发”，不会同步做耗时计算；实际工作由 worker 异步完成（Kafka）。
+    Reindex means: re-chunk using the given chunk profile, regenerate embeddings, and
+    write them into the vector table.
+    Note: this endpoint only publishes a trigger message; the heavy work is performed
+    asynchronously by the worker (Kafka).
     """
 
-    chunk_profile_id: str = Field(..., description="用于重建索引的 chunk profile UUID。")
+    chunk_profile_id: str = Field(..., description="Chunk profile UUID to use for reindex.")
     embedding_model: Optional[str] = Field(
         None,
-        description="可选：本次重建索引使用的 embedding 模型。为空则使用服务默认配置。",
+        description="Optional: embedding model to use for this reindex. If omitted, use the service default.",
         examples=["intfloat/multilingual-e5-small"],
     )
     document_ids: Optional[List[str]] = Field(
         None,
-        description="可选：仅重建这些 document UUID；为空则重建全部 READY 文档。",
+        description="Optional: only reindex these document UUIDs; if omitted, reindex all READY documents.",
         examples=[["14b1f61b-1842-455d-b31c-7f0882bb1729"]],
     )
 
 
 class ChatRequest(BaseModel):
-    """对话请求模型（目前主要用于文档/参考）。
+    """Chat request model (currently for documentation/reference).
 
-    说明：本文件实际实现的是 `GET /v1/chat/stream`（SSE 流式），并非 POST JSON。
+    Note: this file implements `GET /v1/chat/stream` (SSE streaming), not a POST JSON endpoint.
     """
 
-    query: str = Field(..., description="用户问题。", examples=["这个项目是做什么的？"])
-    top_k: Optional[int] = Field(None, description="检索 top_k（返回 chunk 数）。", examples=[5])
+    query: str = Field(..., description="User question.", examples=["What does this project do?"])
+    top_k: Optional[int] = Field(None, description="Retrieval top_k (number of chunks returned).", examples=[5])
     chunk_profile_id: Optional[str] = Field(
         None,
-        description="可选：指定 chunk profile UUID；为空则使用当前激活 profile。",
+        description="Optional: specify a chunk profile UUID; if omitted, use the currently active profile.",
     )
 
 
@@ -175,17 +182,17 @@ class ChatRequest(BaseModel):
     "/",
     response_class=HTMLResponse,
     tags=[TAGS_SYSTEM],
-    summary="Web UI（HTML）",
+    summary="Web UI (HTML)",
     description=(
-        "提供一个极简的单页 HTML UI，用于手工验证（上传 + 流式对话）。"
-        "程序化调用请使用 /v1/* 接口，并查看 /docs 自动生成的 OpenAPI 文档。"
+        "Provides a minimal single-page HTML UI for manual verification (upload + streaming chat). "
+        "For programmatic access, use the /v1/* APIs and see the OpenAPI docs at /docs."
     ),
 )
 async def root():
-    """返回一个极简 HTML UI。
+    """Return a minimal HTML UI.
 
-    该页面仅用于快速验证：上传文件、尝试 SSE 流式对话。
-    并不是一个完整的前端应用。
+    This page is only for quick manual testing: upload files and try SSE streaming chat.
+    It is not a full-fledged frontend application.
     """
     html_content = """
     <!DOCTYPE html>
@@ -471,13 +478,13 @@ async def root():
 @app.get(
     "/health",
     tags=[TAGS_SYSTEM],
-    summary="健康检查",
-    description="存活探针（liveness）。服务进程正常时返回 200。",
+    summary="Health check",
+    description="Liveness probe. Returns 200 when the service process is running.",
 )
 async def health():
-    """健康检查（liveness）。
+    """Health check (liveness).
 
-    返回：`{"status": "ok"}`。
+    Returns: `{"status": "ok"}`.
     """
     return {"status": "ok"}
 
@@ -486,11 +493,11 @@ async def health():
     "/v1/documents",
     response_model=DocumentResponse,
     tags=[TAGS_DOCUMENTS],
-    summary="上传文档",
+    summary="Upload document",
     description=(
-        "上传单个文档：保存到磁盘、写入 documents 表，并发送 ingest 事件到 Kafka。"
-        "真正的解析/分块/embedding/写向量表由 worker 异步完成。"
-        "\n\n去重策略：按文件 SHA-256 去重。若已存在相同 SHA-256 的文档，本次上传会删除重复文件并直接返回已存在的文档记录。"
+        "Upload a single document: save to disk, insert into the documents table, and publish an ingest event to Kafka. "
+        "Parsing/chunking/embedding/vector writes are done asynchronously by the worker."
+        "\n\nDedup strategy: deduplicate by file SHA-256. If a document with the same SHA-256 already exists, this upload deletes the duplicate file and returns the existing document record."
     ),
     responses={
         200: {"description": "Document accepted (or deduplicated) and ingestion scheduled."},
@@ -501,24 +508,25 @@ async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """上传文档并触发异步入库/索引。
+    """Upload a document and trigger async ingest/index.
 
-    处理流程：
-        1) 将上传的文件落盘到 `APP_UPLOAD_DIR`。
-        2) 计算 SHA-256 并检查是否重复。
-        3) 向 `documents` 表插入记录（初始 status=uploaded）。
-        4) 向 Kafka 发布 ingest 消息，worker 将异步处理（解析→分块→embedding→写向量表）。
+    Flow:
+        1) Persist the uploaded file to `APP_UPLOAD_DIR`.
+        2) Compute SHA-256 and check for duplicates.
+        3) Insert a record into the `documents` table (initial status=uploaded).
+        4) Publish an ingest message to Kafka; the worker processes asynchronously
+           (parse -> chunk -> embed -> write vectors).
 
-    参数：
-        file: multipart 文件字段。
-        db: SQLAlchemy 会话（依赖注入）。
+    Args:
+        file: Multipart file field.
+        db: SQLAlchemy session (dependency injection).
 
-    返回：
-        DocumentResponse：文档基本信息与当前状态。
+    Returns:
+        DocumentResponse: Basic document info and current status.
 
-    备注：
-        - 返回的 status 可能是 uploaded 或 ingesting（取决于 worker 消费速度）。
-        - 进度查看：轮询 `GET /v1/documents` 或查看 worker 日志。
+    Notes:
+        - Returned status may be uploaded or ingesting (depends on worker speed).
+        - To check progress: poll `GET /v1/documents` or check worker logs.
     """
     try:
         # Save file
@@ -583,10 +591,10 @@ async def upload_document(
     "/v1/documents",
     response_model=List[DocumentResponse],
     tags=[TAGS_DOCUMENTS],
-    summary="获取文档列表",
-    description="从数据库读取文档列表（通过 skip/limit 做简单分页）。",
+    summary="List documents",
+    description="Read the document list from the database (simple pagination via skip/limit).",
     responses={
-        200: {"description": "文档列表。"},
+        200: {"description": "Document list."},
     },
 )
 async def list_documents(
@@ -594,15 +602,15 @@ async def list_documents(
     limit: int = 100,
     db: Session = Depends(get_db)
 ):
-    """获取文档列表。
+    """List documents.
 
-    参数：
-        skip: offset。
-        limit: 返回条数上限。
-        db: SQLAlchemy 会话。
+    Args:
+        skip: Offset.
+        limit: Maximum number of items to return.
+        db: SQLAlchemy session.
 
-    返回：
-        文档列表（当前实现未显式排序，顺序由数据库默认行为决定）。
+    Returns:
+        List of documents (no explicit ordering; order depends on database default behavior).
     """
     docs = db.query(Document).offset(skip).limit(limit).all()
     
@@ -623,8 +631,8 @@ async def list_documents(
     "/v1/chunk-profiles",
     response_model=List[ChunkProfileResponse],
     tags=[TAGS_CHUNK_PROFILES],
-    summary="获取分块策略列表",
-    description="返回全部 chunk profiles；其中最多一个可处于激活状态（is_active=true）。",
+    summary="List chunk profiles",
+    description="Return all chunk profiles; at most one may be active (is_active=true).",
 )
 async def list_chunk_profiles(db: Session = Depends(get_db)):
     """List all chunk profiles."""
@@ -648,10 +656,10 @@ async def list_chunk_profiles(db: Session = Depends(get_db)):
     "/v1/chunk-profiles",
     response_model=ChunkProfileResponse,
     tags=[TAGS_CHUNK_PROFILES],
-    summary="创建分块策略",
+    summary="Create chunk profile",
     description=(
-        "创建新的 chunk profile。新建 profile 默认不激活。"
-        "要切换为生效策略，请调用 `POST /v1/chunk-profiles/{profile_id}/activate`。"
+        "Create a new chunk profile. Newly created profiles are inactive by default. "
+        "To switch the active profile, call `POST /v1/chunk-profiles/{profile_id}/activate`."
     ),
     responses={
         400: {"description": "Profile name already exists."},
@@ -662,14 +670,14 @@ async def create_chunk_profile(
     profile: ChunkProfileCreate,
     db: Session = Depends(get_db)
 ):
-    """创建新的 chunk profile。
+    """Create a new chunk profile.
 
-    参数：
-        profile: 分块配置。
-        db: SQLAlchemy 会话。
+    Args:
+        profile: Chunking configuration.
+        db: SQLAlchemy session.
 
-    返回：
-        创建后的 profile。
+    Returns:
+        The created profile.
     """
     # Check if name already exists
     existing = db.query(ChunkProfile).filter(ChunkProfile.name == profile.name).first()
@@ -704,10 +712,10 @@ async def create_chunk_profile(
 @app.post(
     "/v1/chunk-profiles/{profile_id}/activate",
     tags=[TAGS_CHUNK_PROFILES],
-    summary="激活分块策略",
+    summary="Activate chunk profile",
     description=(
-        "将指定 profile 设为激活，并将其他 profile 全部设为非激活。"
-        "当检索/对话接口未显式指定 profile 时，会使用当前激活的 profile。"
+        "Set the specified profile as active and mark all other profiles as inactive. "
+        "When retrieval/chat endpoints do not explicitly specify a profile, the currently active profile is used."
     ),
     responses={
         200: {"description": "Profile activated."},
@@ -718,16 +726,16 @@ async def activate_chunk_profile(
     profile_id: str,
     db: Session = Depends(get_db)
 ):
-    """激活 chunk profile。
+    """Activate a chunk profile.
 
-    会更新数据库，保证仅一个 profile 处于 `is_active=true`。
+    Updates the database to ensure only one profile has `is_active=true`.
 
-    参数：
-        profile_id: chunk profile UUID。
-        db: SQLAlchemy 会话。
+    Args:
+        profile_id: Chunk profile UUID.
+        db: SQLAlchemy session.
 
-    返回：
-        简单 JSON 确认激活成功。
+    Returns:
+        A simple JSON acknowledgement.
     """
     profile = db.query(ChunkProfile).filter(ChunkProfile.id == profile_id).first()
     if not profile:
@@ -747,10 +755,10 @@ async def activate_chunk_profile(
 @app.post(
     "/v1/reindex",
     tags=[TAGS_REINDEX],
-    summary="触发重建索引",
+    summary="Trigger reindex",
     description=(
-        "对选定文档发布 reindex 事件到 Kafka。"
-        "若不传 document_ids，则默认对所有 READY 文档触发重建索引。"
+        "Publish reindex events to Kafka for selected documents. "
+        "If document_ids is omitted, reindex is triggered for all READY documents."
     ),
     responses={
         200: {"description": "Reindex events published."},
@@ -760,16 +768,17 @@ async def reindex_documents(
     request: ReindexRequest,
     db: Session = Depends(get_db)
 ):
-    """触发重建索引（异步）。
+    """Trigger reindex (asynchronously).
 
-    该接口仅负责发布 Kafka 消息，不会在请求周期内做 embedding 计算。
+    This endpoint only publishes Kafka messages; it does not run embedding computation
+    within the request lifecycle.
 
-    参数：
-        request: 目标 chunk_profile 以及可选过滤条件。
-        db: SQLAlchemy 会话。
+    Args:
+        request: Target chunk_profile and optional filters.
+        db: SQLAlchemy session.
 
-    返回：
-        触发结果汇总（文档数量等）。
+    Returns:
+        Summary of what was triggered (e.g., document count).
     """
     # Get documents to reindex
     if request.document_ids:
@@ -796,11 +805,11 @@ async def reindex_documents(
 @app.get(
     "/v1/chat/stream",
     tags=[TAGS_CHAT],
-    summary="流式对话（SSE）",
+    summary="Streaming chat (SSE)",
     description=(
-        "通过 Server-Sent Events (SSE) 流式返回对话结果。"
-        "服务端会先从向量索引检索相关 chunk，构建 RAG prompt，然后从 LLM 流式输出 token。"
-        "\n\n事件格式：每行 SSE 的 `data:` 是一个 JSON，对应不同 `type`（token/citations/error）。"
+        "Stream chat results via Server-Sent Events (SSE). "
+        "The server retrieves relevant chunks from the vector index, builds a RAG prompt, then streams tokens from the LLM."
+        "\n\nEvent format: each SSE `data:` line is a JSON object with a `type` (token/citations/error)."
     ),
 )
 async def chat_stream(
@@ -809,20 +818,20 @@ async def chat_stream(
     chunk_profile_id: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """流式对话接口（SSE）。
+    """Streaming chat endpoint (SSE).
 
-    Query 参数：
-        query: 用户问题。
-        top_k: 可选，检索返回 chunk 数量。
-        chunk_profile_id: 可选，指定 chunk profile；为空则使用当前激活 profile。
+    Query params:
+        query: User question.
+        top_k: Optional number of chunks to retrieve.
+        chunk_profile_id: Optional chunk profile; if omitted, uses the active profile.
 
-    SSE 流返回：
-        - `data: {"type": "token", "content": "..."}`：逐 token 输出。
-        - `data: {"type": "citations", "citations": [...]}`：最终引用来源。
-        - `data: [DONE]`：结束标记。
+    SSE stream:
+        - `data: {"type": "token", "content": "..."}`: Token-by-token output.
+        - `data: {"type": "citations", "citations": [...]}`: Final citations.
+        - `data: [DONE]`: End marker.
 
-    返回：
-        `text/event-stream` 的 SSE 响应。
+    Returns:
+        An SSE response with content type `text/event-stream`.
     """
     
     async def generate():
