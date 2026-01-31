@@ -10,6 +10,50 @@ This is a streamlined guide to get you up and running with AI Knowledge Bench qu
 
 ## 5-Minute Setup
 
+### Mainland China Notes (Recommended)
+
+Full guide: [docs/china.md](docs/china.md)
+
+If this machine is in mainland China, you may want to:
+
+1. Configure Docker registry mirrors (speeds up pulling images from Docker Hub)
+2. Use a domestic PyPI mirror during Docker image builds (speeds up installing Python deps)
+3. Download LLM weights via ModelScope (instead of Hugging Face)
+
+**Docker registry mirrors** (example for Linux):
+
+Edit `/etc/docker/daemon.json`:
+
+```json
+{
+      "registry-mirrors": [
+            "https://docker.m.daocloud.io",
+            "https://mirror.ccs.tencentyun.com"
+      ]
+}
+```
+
+Then restart Docker.
+
+**PyPI mirror for Docker builds**:
+
+This repo defaults to TUNA mirror for Docker builds. You can override it per-run:
+
+```bash
+export PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+export PIP_TRUSTED_HOST=mirrors.aliyun.com
+```
+
+**ModelScope for LLM weights** (vLLM runs separately):
+
+- Install ModelScope CLI: `pip install modelscope`
+- Find the model on ModelScope, download to a local directory, then run vLLM with a local path:
+
+```bash
+modelscope download --model <model_id_on_modelscope> --local_dir ./models/<model_name>
+vllm serve ./models/<model_name> --device cpu --port 8000
+```
+
 ### 1. Clone and Validate
 
 ```bash

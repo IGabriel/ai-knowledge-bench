@@ -60,7 +60,7 @@ class Document(Base):
     sha256 = Column(String(64), nullable=False, unique=True, index=True)
     status = Column(Enum(DocumentStatus), nullable=False, default=DocumentStatus.UPLOADED)
     error_message = Column(Text, nullable=True)
-    metadata = Column(Text, nullable=True)  # JSON string
+    metadata_json = Column("metadata", Text, nullable=True)  # JSON string
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -78,7 +78,7 @@ class DocumentSection(Base):
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
     source_ref = Column(String(512), nullable=False)  # e.g., "page=5", "slide=3", "sheet=Summary"
     content = Column(Text, nullable=False)
-    metadata = Column(Text, nullable=True)  # JSON string
+    metadata_json = Column("metadata", Text, nullable=True)  # JSON string
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships
@@ -118,7 +118,7 @@ class DocumentChunk(Base):
     content = Column(Text, nullable=False)
     source_ref = Column(String(512), nullable=False)
     chunk_index = Column(Integer, nullable=False)
-    metadata = Column(Text, nullable=True)  # JSON string
+    metadata_json = Column("metadata", Text, nullable=True)  # JSON string
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships

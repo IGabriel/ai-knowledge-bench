@@ -54,6 +54,37 @@ An end-to-end **RAG (Retrieval-Augmented Generation) knowledge assistant** with 
 
 ## Quick Start 🚀
 
+### Mainland China (Recommended)
+
+If you are running in mainland China, you will likely want to use:
+
+- **Docker registry mirrors** (to speed up pulling base images)
+- **Domestic PyPI mirrors** (to speed up Python dependency installs inside Docker builds)
+- **ModelScope** (to download LLM weights, then run vLLM using a local path)
+
+This repo supports domestic PyPI mirrors for Docker builds via build args in `docker compose`.
+Defaults are set in `.env.example` (TUNA), and can be overridden by exporting:
+
+```bash
+export PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+export PIP_TRUSTED_HOST=mirrors.aliyun.com
+```
+
+For Docker registry mirrors, configure your Docker daemon (Linux example):
+
+```json
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io",
+    "https://mirror.ccs.tencentyun.com"
+  ]
+}
+```
+
+For vLLM weights, use ModelScope to download to local disk and start vLLM with a local model path.
+
+See also: [docs/china.md](docs/china.md)
+
 ### Prerequisites
 
 - Docker & Docker Compose

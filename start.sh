@@ -25,7 +25,12 @@ echo "🐳 Starting services with Docker Compose..."
 cd deploy
 
 # Start services
-docker compose up -d
+if ! docker compose --env-file ../.env up -d; then
+    echo ""
+    echo "⚠️  docker compose up failed. This host may restrict stopping/recreating containers (permission denied)."
+    echo "    Retrying without recreating existing containers..."
+    docker compose --env-file ../.env up -d --no-recreate
+fi
 
 echo ""
 echo "⏳ Waiting for services to be healthy..."

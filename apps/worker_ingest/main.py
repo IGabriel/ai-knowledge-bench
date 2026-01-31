@@ -117,7 +117,7 @@ def process_document(document_id: str, chunk_profile_id: str = None):
                 document_id=doc.id,
                 source_ref=section.source_ref,
                 content=section.content,
-                metadata=json.dumps(section.metadata) if section.metadata else None,
+                metadata_json=json.dumps(section.metadata) if section.metadata else None,
                 created_at=datetime.utcnow()
             )
             db.add(section_record)

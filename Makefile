@@ -11,28 +11,28 @@ install: ## Install Python dependencies
 	pip install -e ".[dev]"
 
 start: ## Start all services with Docker Compose
-	cd deploy && docker compose up -d
+	cd deploy && docker compose --env-file ../.env up -d
 
 stop: ## Stop all services
-	cd deploy && docker compose down
+	cd deploy && docker compose --env-file ../.env down
 
 restart: ## Restart all services
-	cd deploy && docker compose restart
+	cd deploy && docker compose --env-file ../.env restart
 
 logs: ## Show logs for all services
-	cd deploy && docker compose logs -f
+	cd deploy && docker compose --env-file ../.env logs -f
 
 logs-api: ## Show logs for web API
-	cd deploy && docker compose logs -f web_api
+	cd deploy && docker compose --env-file ../.env logs -f web_api
 
 logs-worker: ## Show logs for worker
-	cd deploy && docker compose logs -f worker_ingest
+	cd deploy && docker compose --env-file ../.env logs -f worker_ingest
 
 clean: ## Stop services and remove volumes (WARNING: deletes data)
-	cd deploy && docker compose down -v
+	cd deploy && docker compose --env-file ../.env down -v
 
 ps: ## Show service status
-	cd deploy && docker compose ps
+	cd deploy && docker compose --env-file ../.env ps
 
 test: ## Run tests
 	pytest tests/
@@ -56,19 +56,19 @@ downgrade: ## Rollback last migration
 	alembic downgrade -1
 
 shell-api: ## Open shell in web_api container
-	cd deploy && docker compose exec web_api bash
+	cd deploy && docker compose --env-file ../.env exec web_api bash
 
 shell-worker: ## Open shell in worker_ingest container
-	cd deploy && docker compose exec worker_ingest bash
+	cd deploy && docker compose --env-file ../.env exec worker_ingest bash
 
 shell-db: ## Open PostgreSQL shell
-	cd deploy && docker compose exec postgres psql -U bench_user -d ai_knowledge_bench
+	cd deploy && docker compose --env-file ../.env exec postgres psql -U bench_user -d ai_knowledge_bench
 
 build: ## Build Docker images
-	cd deploy && docker compose build
+	cd deploy && docker compose --env-file ../.env build
 
 rebuild: ## Rebuild Docker images without cache
-	cd deploy && docker compose build --no-cache
+	cd deploy && docker compose --env-file ../.env build --no-cache
 
 eval: ## Run evaluation (requires active chunk profile)
 	@echo "Get active chunk profile ID first:"
