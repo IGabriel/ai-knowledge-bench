@@ -61,6 +61,10 @@ An end-to-end **RAG (Retrieval-Augmented Generation) knowledge assistant** with 
 - 8GB+ RAM recommended
 - For vLLM: additional compute resources (can run separately)
 
+📖 **For detailed system dependencies**, see:
+- [DEPENDENCIES.md](DEPENDENCIES.md) - Complete system dependencies guide (English)
+- [DEPENDENCIES_zh.md](DEPENDENCIES_zh.md) - 系统依赖完整指南（中文）
+
 ### 1. Clone and Setup
 
 ```bash
@@ -409,6 +413,16 @@ For production deployments:
 4. Add tests (if applicable)
 5. Run linters: `black . && ruff check .`
 6. Submit a pull request
+
+## Documentation 📚
+
+- [README.md](README.md) - This file, main project documentation
+- [QUICKSTART.md](QUICKSTART.md) - Quick start guide for getting up and running fast
+- [DEPENDENCIES.md](DEPENDENCIES.md) - Complete system dependencies guide (English)
+- [DEPENDENCIES_zh.md](DEPENDENCIES_zh.md) - 系统依赖完整指南（中文）
+- [docs/design.md](docs/design.md) - Architecture and design decisions
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
+- [CHANGELOG.md](CHANGELOG.md) - Version history and changes
 
 ## License 📄
 
